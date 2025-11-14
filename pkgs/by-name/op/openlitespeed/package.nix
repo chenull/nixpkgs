@@ -1,14 +1,20 @@
 {
   lib,
   stdenv,
-  fetchFromGitHub,
+  brotli,
   cmake,
-  luajit,
-  openssl,
+  fetchFromGitHub,
+  ip2location-c,
   libaio,
   libcap,
+  libmaxminddb,
   libxcrypt,
+  luajit,
+  openssl,
+  perl,
   pcre,
+  udns,
+  zlib,
   breakpointHook,
 }:
 
@@ -48,23 +54,37 @@ stdenv.mkDerivation rec {
     fetchSubmodules = true;
   };
 
+  opensslSrc = fetchFromGitHub {
+    owner = "openssl";
+    repo = "openssl";
+    rev = "OpenSSL_1_0_2p";
+    hash = "sha256-vu3+mi/9YFBHNGdqfGB8GoFItJn5htbVBfZang1/anQ=";
+  };
+
   enableParallelBuilding = false;
 
   buildInputs = [
-    libcap
-    libxcrypt
+    brotli
+    ip2location-c
     libaio
+    libcap
+    libmaxminddb
+    libxcrypt
     luajit
     openssl
     pcre
+    udns
+    zlib
   ];
 
   nativeBuildInputs = [
     breakpointHook
     cmake
+    perl
   ];
 
   postPatch = ''
+    patchShebangs src/liblsquic/gen-verstrs.pl
     substituteInPlace CMakeLists.txt \
       --replace-fail "add_definitions(-DRUN_TEST)" "    # add_definitions(-DRUN_TEST)" \
       --replace-fail "add_definitions(-DTEST_OUTPUT_PLAIN_CONF)" "# add_definitions(-DTEST_OUTPUT_PLAIN_CONF)" \
@@ -88,17 +108,13 @@ stdenv.mkDerivation rec {
   '';
 
   postUnpack = ''
-    # mkdir -p third-party
-    # cp -r --no-preserve=mode ${thirdPartySrc}/. third-party
-    # cp -r ${thirdPartySrc}/. third-party
-    # chmod -R u+w third-party
-    # mkdir -p third-party/include third-party/lib64 third-party/src
-    echo "START POST UNPACK ${src}"
-    mkdir -p ${pname}/third-party
-    cp -r ${thirdPartySrc}/. ${pname}/third-party
-    mkdir -p ${pname}/third-party/lib64
-    mkdir -p ${pname}/third-party/include
-    chmod -R u+w ${pname}/third-party
+    # prepare third-party libraries
+    mkdir -p third-party/lib64 third-party/include
+    cp -r --no-preserve=mode ${thirdPartySrc}/. third-party
+
+    # prepare lsquic library
+    mkdir -p ${pname}/lsquic
+    cp -r ${lsquicSrc}/. ${pname}/lsquic
 
     #substituteInPlace ${pname}/third-party/script/build_ols.sh \
     #  --replace-fail "unittest-cpp" "bcrypt"
@@ -107,19 +123,31 @@ stdenv.mkDerivation rec {
     #   --replace-fail "git submodule update --init" "true" \
     #   --replace-fail "for BUILD_LIB in \$BUILD_LIBS" "for BUILD_LIB in \"\"" \
     #   --replace-fail "   ./build_$BUILD_LIB.sh" "   [ -n \"$BUILD_LIB\" ] && ./build_$BUILD_LIB.sh"
-    cp -r --no-preserve=mode ${bcryptSrc} ${pname}/third-party/src/libbcrypt
-    # chmod -R u+w third-party/src/libbcrypt
-    pushd ${pname}/third-party/src/libbcrypt
+
+    # prepare bcrypt library
+    cp -r --no-preserve=mode ${bcryptSrc} third-party/src/libbcrypt
+    pushd third-party/src/libbcrypt
     make
-    echo "END MAKE"
-    echo "START CP"
     cp bcrypt.h ../../include/
     cp bcrypt.a ../../lib64/libbcrypt.a
 
     #pushd ${pname}/third-party/script
     #./build_ols.sh
     popd
-    echo "END POST UNPACK"
+
+    # prepare openssl vendoring for openssl/curve25519.h
+    # prefix=`pwd`
+    # cp -r --no-preserve=mode ${openssl} third-party/src/openssl
+    cp -r ${opensslSrc} third-party/src/openssl
+    # chmod -R u+w third-party/src/openssl
+    # pushd third-party/src/openssl
+    # ./config -DPURIFY --prefix=$(prefix) --openssldir=$(prefix)/lib/openssl no-shared no-dso
+    # make depend
+    # make -j ''${NIX_BUILD_CORES:-1}
+    # mkdir ../../include/openssl
+    # cp -R -L include/openssl ../../include/openssl
+    # cp libssl.a ../../lib/libssl.a
+    # cp libcrypto.a ../../lib/libcrypto.a
   '';
 
   cmakeFlags = [
