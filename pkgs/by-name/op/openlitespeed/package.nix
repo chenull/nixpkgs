@@ -1,22 +1,79 @@
 {
   lib,
   stdenv,
+  boringssl,
   brotli,
   cmake,
   fetchFromGitHub,
+  fetchzip,
+  expat,
+  curl,
+  go,
   ip2location-c,
   libaio,
   libcap,
+  lmdb,
   libmaxminddb,
+  libmodsecurity,
   libxcrypt,
+  libxml2,
   luajit,
-  openssl,
   perl,
   pcre,
   udns,
+  yajl,
   zlib,
   breakpointHook,
 }:
+
+let
+  psolLegacy = stdenv.mkDerivation rec {
+    pname = "psol";
+    version = "1.11.33.4";
+
+    src = fetchzip {
+      url = "https://dl.google.com/dl/page-speed/psol/${version}.tar.gz";
+      hash = "sha256-RhBvq8XlfqafzNOY+64lqSS/vRvY/bvJ5Fj5nSaWTRI=";
+      stripRoot = false;
+    };
+
+    dontConfigure = true;
+    dontBuild = true;
+
+    installPhase = ''
+      runHook preInstall
+
+      mkdir -p $out
+      cp -r psol/include $out/
+      cp -r psol/lib $out/ || true
+      if [ -d psol/lib64 ]; then
+        cp -r psol/lib64 $out/
+      fi
+
+      install -d $out/include/pagespeed/kernel/base
+      cat <<'EOF' > $out/include/pagespeed/kernel/base/scoped_ptr.h
+/**
+* Due the compiling issue, this file was updated from the original file.
+*/
+#ifndef PAGESPEED_KERNEL_BASE_SCOPED_PTR_H_
+#define PAGESPEED_KERNEL_BASE_SCOPED_PTR_H_
+#include "base/memory/scoped_ptr.h"
+
+namespace net_instaweb {
+template<typename T> class scoped_array : public scoped_ptr<T[]> {
+public:
+    scoped_array() : scoped_ptr<T[]>() {}
+    explicit scoped_array(T* t) : scoped_ptr<T[]>(t) {}
+};
+}
+#endif
+EOF
+
+      runHook postInstall
+    '';
+  };
+
+in
 
 stdenv.mkDerivation rec {
   pname = "openlitespeed";
@@ -54,32 +111,40 @@ stdenv.mkDerivation rec {
     fetchSubmodules = true;
   };
 
-  opensslSrc = fetchFromGitHub {
-    owner = "openssl";
-    repo = "openssl";
-    rev = "OpenSSL_1_0_2p";
-    hash = "sha256-vu3+mi/9YFBHNGdqfGB8GoFItJn5htbVBfZang1/anQ=";
+  boringSslSrc = fetchFromGitHub {
+    owner = "google";
+    repo = "boringssl";
+    rev = "9fc1c33e9c21439ce5f87855a6591a9324e569fd";
+    hash = "sha256-JG+y3c1lKcmlOEHmKJMHf6b8FwAuP01vWHn8xzsJtKc=";
   };
 
   enableParallelBuilding = false;
 
   buildInputs = [
+    boringssl
     brotli
+    expat
+    curl
     ip2location-c
     libaio
     libcap
+    lmdb
     libmaxminddb
+    libmodsecurity
     libxcrypt
+    libxml2
     luajit
-    openssl
     pcre
+    psolLegacy
     udns
+    yajl
     zlib
   ];
 
   nativeBuildInputs = [
     breakpointHook
     cmake
+    go
     perl
   ];
 
@@ -90,24 +155,66 @@ stdenv.mkDerivation rec {
       --replace-fail "add_definitions(-DTEST_OUTPUT_PLAIN_CONF)" "# add_definitions(-DTEST_OUTPUT_PLAIN_CONF)" \
       --replace-fail "add_definitions(-DDEBUG_POOL)" "# add_definitions(-DDEBUG_POOL)" \
       --replace-fail "set(libUnitTest  libUnitTest++.a)" "# set(libUnitTest  libUnitTest++.a)" \
-      --replace-fail "add_subdirectory(test)" "# add_subdirectory(test)"
+      --replace-fail "add_subdirectory(test)" "# add_subdirectory(test)" \
+      --replace-fail "set(BROTLI_ADD_LIB  libbrotlidec-static.a libbrotlienc-static.a libbrotlicommon-static.a)" \
+                      "set(BROTLI_ADD_LIB  brotlidec brotlienc brotlicommon)" \
+      --replace-fail "set(IP2LOC_ADD_LIB  libIP2Location.a)" \
+                      "set(IP2LOC_ADD_LIB  IP2Location)"
 
     substituteInPlace src/CMakeLists.txt \
       --replace-fail "  set(STDCXX libstdc++.a)" "  set(STDCXX \"\")" \
-      --replace-fail "-nodefaultlibs " ""
+      --replace-fail "-nodefaultlibs " "" \
+      --replace-fail "libpcre.a" "pcre" \
+      --replace-fail "libz.a" "z" \
+      --replace-fail "libexpat.a" "expat" \
+      --replace-fail "libxml2.a" "xml2"
+
+    substituteInPlace test/CMakeLists.txt \
+      --replace-fail "libz.a" "z" \
+      --replace-fail "libexpat.a" "expat" \
+      --replace-fail "libxml2.a" "xml2"
 
     substituteInPlace src/modules/modsecurity-ls/CMakeLists.txt \
-      --replace-fail "-nodefaultlibs libstdc++.a" ""
+      --replace-fail "-nodefaultlibs libstdc++.a" "" \
+      --replace-fail "-lz" "z" \
+      --replace-fail "-llmdb" "lmdb" \
+      --replace-fail "-lxml2" "xml2" \
+      --replace-fail "-lcurl" "curl" \
+      --replace-fail "target_link_libraries(mod_security libmodsecurity.a" \
+                     "target_link_libraries(mod_security modsecurity" \
+      --replace-fail "-lyajl" "yajl"
+
+    substituteInPlace src/modules/pagespeed/CMakeLists.txt \
+      --replace-fail 'set(PSOL_LIB ''${PROJECT_SOURCE_DIR}/../third-party/psol-''${PSOL_VER})' \
+                      "set(PSOL_LIB \"${psolLegacy}\")"
+
+    sed -i 's|\(''${PSOL_LIB}/include/third_party/google-sparsehash/src\)|\1\n                ''${PSOL_LIB}/include/third_party/google-sparsehash/src/src|' \
+      src/modules/pagespeed/CMakeLists.txt
 
     substituteInPlace src/modules/lua/CMakeLists.txt \
-      --replace-fail "-nodefaultlibs libstdc++.a" ""
+      --replace-fail "-nodefaultlibs libstdc++.a" "" \
+      --replace-fail "target_link_libraries(mod_lua libluajit.a" \
+                     "target_link_libraries(mod_lua luajit-5.1"
 
     substituteInPlace src/lsr/CMakeLists.txt \
       --replace-fail "   ls_llmq.c" "  # ls_llmq.c" \
       --replace-fail "   ls_llxq.c" "  # ls_llxq.c"
   '';
 
+  # postPatch = ''
+  #   substituteInPlace src/modules/pagespeed/CMakeLists.txt \
+  #     --replace-fail 'set(PSOL_LIB ''${PROJECT_SOURCE_DIR}/../third-party/psol-''${PSOL_VER})' \
+  #                     "set(PSOL_LIB \"${psol}\")"
+
+  #   sed -i 's|\(''${PSOL_LIB}/include/third_party/google-sparsehash/src\)|\1\n                ''${PSOL_LIB}/include/third_party/google-sparsehash/src/src|' \
+  #     src/modules/pagespeed/CMakeLists.txt
+  # '';
+
   postUnpack = ''
+    # prepare tmp dir for go build
+    export GOCACHE=$TMPDIR/go-cache
+    mkdir -p "$GOCACHE"
+
     # prepare third-party libraries
     mkdir -p third-party/lib64 third-party/include
     cp -r --no-preserve=mode ${thirdPartySrc}/. third-party
@@ -135,19 +242,28 @@ stdenv.mkDerivation rec {
     #./build_ols.sh
     popd
 
-    # prepare openssl vendoring for openssl/curve25519.h
-    # prefix=`pwd`
-    # cp -r --no-preserve=mode ${openssl} third-party/src/openssl
-    cp -r ${opensslSrc} third-party/src/openssl
-    # chmod -R u+w third-party/src/openssl
-    # pushd third-party/src/openssl
-    # ./config -DPURIFY --prefix=$(prefix) --openssldir=$(prefix)/lib/openssl no-shared no-dso
-    # make depend
-    # make -j ''${NIX_BUILD_CORES:-1}
-    # mkdir ../../include/openssl
-    # cp -R -L include/openssl ../../include/openssl
-    # cp libssl.a ../../lib/libssl.a
-    # cp libcrypto.a ../../lib/libcrypto.a
+    rm -rf third-party/src/boringssl
+    cp -r --no-preserve=mode ${boringSslSrc}/. third-party/src/boringssl
+    chmod -R u+w third-party/src/boringssl
+
+    pushd third-party/src/boringssl
+    for patchFile in ../../patches/boringssl/bssl_lstls.patch \
+                     ../../patches/boringssl/bssl_inttypes.patch; do
+      patch -p1 < "$patchFile"
+    done
+    substituteInPlace CMakeLists.txt --replace-fail "-Werror" ""
+
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DCMAKE_C_FLAGS="-fPIC" -DCMAKE_CXX_FLAGS="-fPIC"
+    cmake --build build --target crypto ssl decrepit -- -j''${NIX_BUILD_CORES:-1}
+
+    cp build/crypto/libcrypto.a ../../../third-party/lib/libcrypto.a
+    cp build/ssl/libssl.a ../../../third-party/lib/libssl.a
+    cp build/decrepit/libdecrepit.a ../../../third-party/lib/libdecrepit.a
+
+    rm -rf ../../include/openssl
+    cp -r include/openssl ../../include/
+    popd
   '';
 
   cmakeFlags = [
@@ -160,6 +276,6 @@ stdenv.mkDerivation rec {
     description = "High performance, lightweight, open source HTTP server";
     license = licenses.gpl3;
     maintainers = with maintainers; [ sifmelcara ];
-    platforms = platforms.all;
+    platforms = platforms.linux;
   };
 }
