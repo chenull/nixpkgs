@@ -79,15 +79,13 @@ stdenv.mkDerivation rec {
   pname = "openlitespeed";
   version = "1.8.4";
 
-  # src = fetchFromGitHub {
-  #   owner = "litespeedtech";
-  #   repo = "openlitespeed";
-  #   fetchSubmodules = true;
-  #   # tag = "v${version}";
-  #   rev = "7743be878790450d529f52f3a9f6ff4cc78cb01c";
-  #   hash = "sha256-n79dZYWlcKHVUg6wxAxllFSGwaBLElA51NCbRzSb+00=";
-  # };
-  src = /home/chenull/Repo/litespeedtech/openlitespeed;
+  src = fetchFromGitHub {
+    owner = "litespeedtech";
+    repo = "openlitespeed";
+    fetchSubmodules = true;
+    tag = "v${version}";
+    hash = "sha256-Oz9X0lXYM7rKjRrycugYlBYKnPUZAcazEdH6n9wkkkE=";
+  };
 
   bcryptSrc = fetchFromGitHub {
     owner = "litespeedtech";
@@ -148,6 +146,10 @@ stdenv.mkDerivation rec {
     perl
   ];
 
+  patches = [
+    ./src-modules-lua-CMakeLists.txt.patch
+  ];
+
   postPatch = ''
     patchShebangs src/liblsquic/gen-verstrs.pl
     substituteInPlace CMakeLists.txt \
@@ -201,15 +203,6 @@ stdenv.mkDerivation rec {
       --replace-fail "   ls_llxq.c" "  # ls_llxq.c"
   '';
 
-  # postPatch = ''
-  #   substituteInPlace src/modules/pagespeed/CMakeLists.txt \
-  #     --replace-fail 'set(PSOL_LIB ''${PROJECT_SOURCE_DIR}/../third-party/psol-''${PSOL_VER})' \
-  #                     "set(PSOL_LIB \"${psol}\")"
-
-  #   sed -i 's|\(''${PSOL_LIB}/include/third_party/google-sparsehash/src\)|\1\n                ''${PSOL_LIB}/include/third_party/google-sparsehash/src/src|' \
-  #     src/modules/pagespeed/CMakeLists.txt
-  # '';
-
   postUnpack = ''
     # prepare tmp dir for go build
     export GOCACHE=$TMPDIR/go-cache
@@ -222,14 +215,6 @@ stdenv.mkDerivation rec {
     # prepare lsquic library
     mkdir -p ${pname}/lsquic
     cp -r ${lsquicSrc}/. ${pname}/lsquic
-
-    #substituteInPlace ${pname}/third-party/script/build_ols.sh \
-    #  --replace-fail "unittest-cpp" "bcrypt"
-    #   --replace-fail "BUILD_LIBS=\"brotli zlib bssl bcrypt expat libaio ip2loc libmaxminddb luajit pcre psol udns bcrypt lmdb curl libxml2 yajl libmodsec\"" \
-    #             "BUILD_LIBS=\"\"" \
-    #   --replace-fail "git submodule update --init" "true" \
-    #   --replace-fail "for BUILD_LIB in \$BUILD_LIBS" "for BUILD_LIB in \"\"" \
-    #   --replace-fail "   ./build_$BUILD_LIB.sh" "   [ -n \"$BUILD_LIB\" ] && ./build_$BUILD_LIB.sh"
 
     # prepare bcrypt library
     cp -r --no-preserve=mode ${bcryptSrc} third-party/src/libbcrypt

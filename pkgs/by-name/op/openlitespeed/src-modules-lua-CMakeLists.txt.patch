@@ -1,0 +1,17 @@
+diff --git a/src/modules/lua/CMakeLists.txt b/src/modules/lua/CMakeLists.txt
+index bc52b675..5c89e96d 100644
+--- a/src/modules/lua/CMakeLists.txt
++++ b/src/modules/lua/CMakeLists.txt
+@@ -2,7 +2,11 @@
+ cmake_minimum_required(VERSION 3.0)
+ INCLUDE( ${PROJECT_SOURCE_DIR}/CMakeModules/common.cmake)
+ 
+-set(LUAJITDIR "${PROJECT_SOURCE_DIR}/../third-party/include/luajit-2.1/")
++find_path(
++    LUAJITDIR
++    NAMES luajit.h
++    PATH_SUFFIXES luajit-2.1 include/luajit-2.1 luajit include/luajit
++)
+ include_directories(${LUAJITDIR})
+ 
+ set(CMAKE_VERBOSE_MAKEFILE ON)
